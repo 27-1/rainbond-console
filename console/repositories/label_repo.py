@@ -18,6 +18,13 @@ class ServiceLabelsReporsitory(object):
     def get_service_label(self, label_id):
         return ServiceLabels.objects.filter(label_id=label_id).first()
 
+    def get_labels_by_service_ids(self, service_ids):
+        labels_list = ServiceLabels.objects.filter(service_id__in=service_ids)
+        if labels_list:
+            return labels_list
+        else:
+            return []
+
 
 class NodeLabelsReporsitory(object):
     def get_node_label_by_region(self, region_id):

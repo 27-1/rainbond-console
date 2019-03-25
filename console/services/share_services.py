@@ -18,6 +18,7 @@ from www.apiclient.regionapi import RegionInvokeApi
 from www.models import TenantServiceInfo, ServiceEvent, make_uuid
 from console.services.group_service import group_service
 from console.services.plugin import plugin_config_service
+from console.repositories.label_repo import label_repo, service_label_repo
 
 logger = logging.getLogger("default")
 
@@ -75,6 +76,31 @@ class ShareService(object):
             return service_port_map
         else:
             return {}
+
+    def get_service_labels(self, service_ids):
+        """
+        获取应用标签
+        """
+        service_label_map = dict()
+        labels = service_label_repo.get_labels_by_service_ids(service_ids)
+        if labels:
+            for label in labels:
+                used_label = label_repo.get_label_by_label_id(label.label_id)
+                if used_label:
+                    label_list = []
+                    if label.service_id in service_label_map.keys():
+                        label_list = service_label_map.get(label.service_id)
+                    label_dict = dict()
+                    label_dict["label_name"] = used_label.label_name
+                    label_dict["label_alias"] = used_label.label_alias
+                    label_list.append(label_dict)
+
+                    service_label_map[label.service_id] = label_list
+
+            return service_label_map
+
+        else:
+            return service_label_map
 
     def get_service_dependencys_by_ids(self, service_ids):
         """
@@ -180,7 +206,7 @@ class ShareService(object):
             if res.status == 200:
                 service_versions = {}
                 for version in body["list"]:
-                    service_versions[version["service_id"]] = version["build_version"]
+                    service_versions[version["ServiceID"]] = version["BuildVersion"]
                 return service_versions
         except Exception as e:
             logger.exception(e)
@@ -209,6 +235,9 @@ class ShareService(object):
             extend_method_map = self.get_service_extend_method_by_keys(array_keys)
             # 获取应用的健康检测设置
             probe_map = self.get_service_probes(array_ids)
+            # 获取应用的标签
+            label_map = self.get_service_labels(array_ids)
+            logger.debug('11111111111111111111111111111111111{0}'.format(json.dumps(label_map)))
 
             all_data_map = dict()
 
@@ -291,6 +320,8 @@ class ShareService(object):
                         s_v['volume_name'] = volume.volume_name
                         data['service_volume_map_list'].append(s_v)
 
+                if label_map.get(service.service_id):
+                    data["service_label_list"] = label_map.get(service.service_id)
                 data['service_env_map_list'] = list()
                 data['service_connect_info_map_list'] = list()
                 if service_env_map.get(service.service_id):
@@ -333,7 +364,9 @@ class ShareService(object):
                             service['dep_service_map_list'].append(d)
 
                 all_data.append(service)
+            logger.debug('4444444444444444444444444444444{0}'.format(json.dumps(all_data)))
             return all_data
+
         else:
             return []
 

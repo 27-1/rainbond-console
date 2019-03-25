@@ -740,6 +740,45 @@ class MarketAppService(object):
                 result_list.append(rbapp)
         return total, result_list
 
+    def property_contrast(self, service, tenant, rain_app, app):
+        """
+        更新升级云市应用属性对比
+        :return:
+        """
+        contrast_dict = dict()
+        contrast_dict["version"] = rain_app.version
+        is_true = False
+        # 部署版本对比
+        if service.deploy_version != app["deploy_version"]:
+            is_true = True
+            contrast_dict["deploy_version"] = app["deploy_version"]
+        # 启动参数对比
+        if service.cmd != app["cmd"]:
+            is_true = True
+            contrast_dict["cmd"] = app["cmd"]
+        # 语言对比
+        if service.language != app["language"]:
+            is_true = True
+            contrast_dict["language"] = app["language"]
+        # 实例对比
+
+        # 内存对比
+        if service.min_memory != app["extend_method_map"]["min_memory"]:
+            pass
+        
+
+        # 连接信息对比
+        # 环境变量对比
+        # 端口对比
+        # 存储对比
+        # 插件对比
+        # 健康检测对比
+        # 挂载信息对比
+        # 依赖对比
+
+        contrast_dict["is_true"] = is_true
+        return contrast_dict
+
 
 class MarketTemplateTranslateService(object):
     # 需要特殊处理的service_key
