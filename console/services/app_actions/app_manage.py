@@ -258,10 +258,10 @@ class AppManageService(AppManageBase):
                 if group_obj:
                     # 获取内部市场对象
                     if group_version:
-                        rain_app = rainbond_app_repo.get_rainbond_app_by_key_and_version(group_obj.group_key,
+                        rain_app = rainbond_app_repo.get_enterpirse_app_by_key_and_version(tenant.enterprise_id, group_obj.group_key,
                                                                                          group_version)
                     else:
-                        rain_app = rainbond_app_repo.get_rainbond_app_by_key_and_version(group_obj.group_key,
+                        rain_app = rainbond_app_repo.get_enterpirse_app_by_key_and_version(tenant.enterprise_id, group_obj.group_key,
                                                                                          group_obj.group_version)
                     if rain_app:
                         # 解析app_template的json数据
@@ -378,7 +378,7 @@ class AppManageService(AppManageBase):
         service_volumes = volume_repo.get_service_volumes(service.service_id)
         if service_volumes:
             for volume in service_volumes:
-                code, msg, volume = volume_service.delete_service_volume_by_id(tenant, service, int(volume.volume_id))
+                code, msg, volume = volume_service.delete_service_volume_by_id(tenant, service, int(volume.ID))
                 if code != 200:
                     return 400, msg
         return 200, "success"
@@ -403,11 +403,19 @@ class AppManageService(AppManageBase):
         if not volumes:
             return 200, "success"
         for volume in volumes:
-            code, msg, volume_data = volume_service.add_service_volume(tenant, service, volume["volume_path"],
-                                                                       volume["volume_type"], volume["volume_name"])
-            if code != 200:
-                logger.error("save market app volume error".format(msg))
-                return code, msg
+            if volume.has_key("file_content"):
+                code, msg, volume_data = volume_service.add_service_volume(tenant, service, volume["volume_path"],
+                                                                           volume["volume_type"], volume["volume_name"],
+                                                                           volume["file_content"])
+                if code != 200:
+                    logger.error("save market app volume error".format(msg))
+                    return code, msg
+            else:
+                code, msg, volume_data = volume_service.add_service_volume(tenant, service, volume["volume_path"],
+                                                                           volume["volume_type"], volume["volume_name"])
+                if code != 200:
+                    logger.error("save market app volume error".format(msg))
+                    return code, msg
         return 200, "success"
 
     def __save_env(self, tenant, service, inner_envs, outer_envs):
@@ -438,11 +446,23 @@ class AppManageService(AppManageBase):
         if not ports:
             return 200, "success"
         for port in ports:
-
+            mapping_port = int(port["container_port"])
+            env_prefix = port["port_alias"].upper() if bool(port["port_alias"]) else service.service_key.upper()
             service_port = port_repo.get_service_port_by_port(tenant.tenant_id, service.service_id, int(port["container_port"]))
             if service_port:
+                if port["is_inner_service"]:
+                    code, msg, data = env_var_service.add_service_env_var(tenant, service, int(port["container_port"]), u"连接地址",
+                                                                          env_prefix + "_HOST", "127.0.0.1", False,
+                                                                          scope="outer")
+                    if code != 200:
+                        return code, msg, None
+                    code, msg, data = env_var_service.add_service_env_var(tenant, service, int(port["container_port"]), u"端口",
+                                                                          env_prefix + "_PORT", mapping_port, False,
+                                                                          scope="outer")
+                    if code != 200:
+                        return code, msg, None
+
                 continue
-            logger.debug('=================0000000000>{0}'.format(port))
             code, msg, port_data = port_service.add_service_port(tenant, service,
                                                                  int(port["container_port"]),
                                                                  port["protocol"],
@@ -598,9 +618,12 @@ class AppManageService(AppManageBase):
             one_service = services[0]
             region_name = one_service.service_region
             try:
+                logger.debug('--------12222222222----___>{0}'.format(json.dumps(data)))
                 region_api.batch_operation_service(region_name, tenant.tenant_name, data)
+                return 200, "操作成功"
             except region_api.CallApiError as e:
                 logger.exception(e)
+                return 500, "数据中心操作失败"
         except Exception as e:
             logger.exception(e)
             return 500, "系统异常"
@@ -626,7 +649,7 @@ class AppManageService(AppManageBase):
             if service.create_status == "complete":
                 service_dict["event_id"] = event.event_id
                 service_dict["service_id"] = service.service_id
-                service_dict["configs"] = ''
+
                 start_infos_list.append(service_dict)
             else:
                 event = event_service.update_event(event, "应用未在数据中心创建", "failure")
@@ -634,6 +657,7 @@ class AppManageService(AppManageBase):
         return 200, body
 
     def stop_services_info(self, body, services, tenant, user):
+        logger.debug('--------------__>{0}'.format(body))
         body["operation"] = "stop"
         stop_infos_list = []
         body["stop_infos"] = stop_infos_list
@@ -645,7 +669,6 @@ class AppManageService(AppManageBase):
             if service.create_status == "complete":
                 service_dict["event_id"] = event.event_id
                 service_dict["service_id"] = service.service_id
-                service_dict["configs"] = ''
                 stop_infos_list.append(service_dict)
             else:
                 event = event_service.update_event(event, "应用未在数据中心创建", "failure")
@@ -665,7 +688,7 @@ class AppManageService(AppManageBase):
                 service_dict["event_id"] = event.event_id
                 service_dict["service_id"] = service.service_id
                 service_dict["upgrade_version"] = service.deploy_version
-                service_dict["configs"] = ''
+
                 upgrade_infos_list.append(service_dict)
             else:
                 event = event_service.update_event(event, "应用未在数据中心创建", "failure")
@@ -689,7 +712,7 @@ class AppManageService(AppManageBase):
             service_dict["event_id"] = event.event_id
             service_dict["service_id"] = service.service_id
             service_dict["deploy_version"] = service.deploy_version
-            service_dict["configs"] = ''
+
             service_dict["action"] = 'upgrade'
             envs = env_var_repo.get_build_envs(tenant.tenant_id, service.service_id)
             service_dict["envs"] = envs
@@ -753,59 +776,117 @@ class AppManageService(AppManageBase):
                             if service_source and service_source.extend_info:
                                 extend_info = json.loads(service_source.extend_info)
                                 for app in apps_list:
-                                    if app["service_share_uuid"] == extend_info["source_service_share_uuid"]:
-                                        # 如果是slug包，获取内部市场最新的数据保存（如果是最新，就获取最新，不是最新就获取之前的）
-                                        share_image = app.get("share_image", None)
-                                        share_slug_path = app.get("share_slug_path", None)
-                                        new_extend_info = {}
-                                        if share_image:
-                                            if app.get("service_image", None):
-                                                source_image = dict()
-                                                service_dict["image_info"] = source_image
-                                                source_image["image_url"] = share_image
-                                                source_image["user"] = app.get("service_image").get("hub_user")
-                                                source_image["password"] = app.get("service_image").get("hub_password")
-                                                source_image["cmd"] = service.cmd
-                                                new_extend_info = app["service_image"]
-                                        if share_slug_path:
-                                            slug_info = app.get("service_slug")
-                                            slug_info["slug_path"] = share_slug_path
-                                            new_extend_info = slug_info
-                                            service_dict["slug_info"] = new_extend_info
-                                        # 如果是image，获取内部市场最新镜像版本保存（如果是最新，就获取最新，不是最新就获取之前的， 不会报错）
-                                        service.is_upgrate = False
-                                        service.save()
-                                        new_extend_info["source_deploy_version"] = app.get("deploy_version")
-                                        new_extend_info["source_service_share_uuid"] = app.get("service_share_uuid") \
-                                            if app.get("service_share_uuid", None) \
-                                            else app.get("service_key", "")
-                                        service_source.extend_info = json.dumps(new_extend_info)
-                                        service_source.save()
+                                    if app.has_key("service_share_uuid"):
+                                        if app["service_share_uuid"] == extend_info["source_service_share_uuid"]:
+                                            # 如果是slug包，获取内部市场最新的数据保存（如果是最新，就获取最新，不是最新就获取之前的）
+                                            share_image = app.get("share_image", None)
+                                            share_slug_path = app.get("share_slug_path", None)
+                                            new_extend_info = {}
+                                            if share_image:
+                                                if app.get("service_image", None):
+                                                    source_image = dict()
+                                                    service_dict["image_info"] = source_image
+                                                    source_image["image_url"] = share_image
+                                                    source_image["user"] = app.get("service_image").get("hub_user")
+                                                    source_image["password"] = app.get("service_image").get("hub_password")
+                                                    source_image["cmd"] = service.cmd
+                                                    new_extend_info = app["service_image"]
+                                            if share_slug_path:
+                                                slug_info = app.get("service_slug")
+                                                slug_info["slug_path"] = share_slug_path
+                                                new_extend_info = slug_info
+                                                service_dict["slug_info"] = new_extend_info
+                                            # 如果是image，获取内部市场最新镜像版本保存（如果是最新，就获取最新，不是最新就获取之前的， 不会报错）
+                                            service.is_upgrate = False
+                                            service.save()
+                                            new_extend_info["source_deploy_version"] = app.get("deploy_version")
+                                            new_extend_info["source_service_share_uuid"] = app.get("service_share_uuid") \
+                                                if app.get("service_share_uuid", None) \
+                                                else app.get("service_key", "")
+                                            service_source.extend_info = json.dumps(new_extend_info)
+                                            service_source.save()
 
-                                        # 删除服务原有端口，环境变量，pod
-                                        code, msg = self.__delete_envs(tenant, service)
-                                        if code != 200:
-                                            raise Exception(msg)
-                                        code, msg = self.__delete_volume(tenant, service)
-                                        if code != 200:
-                                            raise Exception(msg)
+                                            # 删除服务原有端口，环境变量，pod
+                                            code, msg = self.__delete_envs(tenant, service)
+                                            if code != 200:
+                                                raise Exception(msg)
+                                            code, msg = self.__delete_volume(tenant, service)
+                                            if code != 200:
+                                                raise Exception(msg)
 
-                                        # 先保存env,再保存端口，因为端口需要处理env
-                                        code, msg = self.__save_env(tenant, service, app["service_env_map_list"],
-                                                                    app["service_connect_info_map_list"])
-                                        if code != 200:
-                                            raise Exception(msg)
-                                        code, msg = self.__save_volume(tenant, service, app["service_volume_map_list"])
-                                        if code != 200:
-                                            raise Exception(msg)
-                                        logger.debug('-------222---->{0}'.format(app["port_map_list"]))
+                                            # 先保存env,再保存端口，因为端口需要处理env
+                                            code, msg = self.__save_env(tenant, service, app["service_env_map_list"],
+                                                                        app["service_connect_info_map_list"])
+                                            if code != 200:
+                                                raise Exception(msg)
+                                            code, msg = self.__save_volume(tenant, service, app["service_volume_map_list"])
+                                            if code != 200:
+                                                raise Exception(msg)
+                                            logger.debug('-------222---->{0}'.format(app["port_map_list"]))
 
-                                        code, msg = self.__save_port(tenant, service, app["port_map_list"])
-                                        if code != 200:
-                                            raise Exception(msg)
+                                            code, msg = self.__save_port(tenant, service, app["port_map_list"])
+                                            if code != 200:
+                                                raise Exception(msg)
 
-                                        # 保存应用探针信息
-                                        self.__save_extend_info(service, app["extend_method_map"])
+                                            # 保存应用探针信息
+                                            self.__save_extend_info(service, app["extend_method_map"])
+
+                                    if not app.has_key("service_share_uuid") and app.has_key("service_key"):
+                                        if app["service_key"] == extend_info["source_service_share_uuid"]:
+                                            # 如果是slug包，获取内部市场最新的数据保存（如果是最新，就获取最新，不是最新就获取之前的）
+                                            share_image = app.get("share_image", None)
+                                            share_slug_path = app.get("share_slug_path", None)
+                                            new_extend_info = {}
+                                            if share_image:
+                                                if app.get("service_image", None):
+                                                    source_image = dict()
+                                                    service_dict["image_info"] = source_image
+                                                    source_image["image_url"] = share_image
+                                                    source_image["user"] = app.get("service_image").get("hub_user")
+                                                    source_image["password"] = app.get("service_image").get(
+                                                        "hub_password")
+                                                    source_image["cmd"] = service.cmd
+                                                    new_extend_info = app["service_image"]
+                                            if share_slug_path:
+                                                slug_info = app.get("service_slug")
+                                                slug_info["slug_path"] = share_slug_path
+                                                new_extend_info = slug_info
+                                                service_dict["slug_info"] = new_extend_info
+                                            # 如果是image，获取内部市场最新镜像版本保存（如果是最新，就获取最新，不是最新就获取之前的， 不会报错）
+                                            service.is_upgrate = False
+                                            service.save()
+                                            new_extend_info["source_deploy_version"] = app.get("deploy_version")
+                                            new_extend_info["source_service_share_uuid"] = app.get("service_share_uuid") \
+                                                if app.get("service_share_uuid", None) \
+                                                else app.get("service_key", "")
+                                            service_source.extend_info = json.dumps(new_extend_info)
+                                            service_source.save()
+
+                                            # 删除服务原有端口，环境变量，pod
+                                            code, msg = self.__delete_envs(tenant, service)
+                                            if code != 200:
+                                                raise Exception(msg)
+                                            code, msg = self.__delete_volume(tenant, service)
+                                            if code != 200:
+                                                raise Exception(msg)
+
+                                            # 先保存env,再保存端口，因为端口需要处理env
+                                            code, msg = self.__save_env(tenant, service, app["service_env_map_list"],
+                                                                        app["service_connect_info_map_list"])
+                                            if code != 200:
+                                                raise Exception(msg)
+                                            code, msg = self.__save_volume(tenant, service,
+                                                                           app["service_volume_map_list"])
+                                            if code != 200:
+                                                raise Exception(msg)
+                                            logger.debug('-------222---->{0}'.format(app["port_map_list"]))
+
+                                            code, msg = self.__save_port(tenant, service, app["port_map_list"])
+                                            if code != 200:
+                                                raise Exception(msg)
+
+                                            # 保存应用探针信息
+                                            self.__save_extend_info(service, app["extend_method_map"])
 
                             group_obj.group_version = rain_app.version
                             group_obj.save()
@@ -903,7 +984,7 @@ class AppManageService(AppManageBase):
         if code != 200:
             return code, msg, event
         # 判断服务是否是运行状态
-        if self.__is_service_running(tenant, service):
+        if self.__is_service_running(tenant, service) and service.service_source != "third_party":
             msg = u"应用可能处于运行状态,请先关闭应用"
             event = event_service.update_event(event, msg, "failure")
             return 409, msg, event
@@ -1136,7 +1217,7 @@ class AppManageService(AppManageBase):
         if code != 200:
             return code, msg, event
         # 判断服务是否是运行状态
-        if self.__is_service_running(tenant, service):
+        if self.__is_service_running(tenant, service) and service.service_source != "third_party":
             msg = "当前应用处于运行状态,请先关闭应用"
             event = event_service.update_event(event, msg, "failure")
             code = 409

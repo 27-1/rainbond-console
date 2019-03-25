@@ -19,7 +19,10 @@ from console.services.region_services import region_services
 from console.repositories.app import service_repo
 from console.constants import AppConstants
 from console.repositories.app_config import tcp_domain
+from console.services.app_config.probe_service import ProbeService
+from console.repositories.probe_repo import probe_repo
 
+pros = ProbeService()
 region_api = RegionInvokeApi()
 env_var_service = AppEnvVarService()
 logger = logging.getLogger("default")
@@ -32,30 +35,33 @@ class AppPortService(object):
             return 400, u"端口{0}已存在".format(container_port)
         if not (1 <= container_port <= 65535):
             return 412, u"端口必须为1到65535的整数"
-        if service.service_source == AppConstants.SOURCE_CODE:
-            if service.language not in ("dockerfile", "docker"):
-                if container_port <= 1024:
-                    return 400, u"源码应用非Dockerfile构建的应用端口不能小于1024"
         return 200, "success"
 
     def check_port_alias(self, port_alias):
+        logger.debug('-------------------11111111111111111111111----------')
         if not port_alias:
             return 400, u"端口别名不能为空"
         if not re.match(r'^[A-Z][A-Z0-9_]*$', port_alias):
             return 400, u"端口别名不合法"
         return 200, "success"
 
-    def is_open_outer_steam_port(self, tenant_id, service_id, current_port):
-        """判断是否有对外打开的非http协议端口"""
-        ports = port_repo.get_service_ports(tenant_id, service_id).filter(is_outer_service=True).exclude(
-            protocol="http").exclude(container_port=current_port)
-        # 如果为公有云且已经开放端口
-        if ports and settings.MODULES.get('SSO_LOGIN'):
-            return True
-        return False
+    # def is_open_outer_steam_port(self, tenant_id, service_id, current_port):
+    #     """判断是否有对外打开的非http协议端口"""
+    #     ports = port_repo.get_service_ports(tenant_id, service_id).filter(is_outer_service=True).exclude(
+    #         protocol="http").exclude(container_port=current_port)
+    #     # 如果为公有云且已经开放端口
+    #     if ports and settings.MODULES.get('SSO_LOGIN'):
+    #         return True
+    #     return False
 
     def add_service_port(self, tenant, service, container_port=0, protocol='', port_alias='',
                          is_inner_service=False, is_outer_service=False):
+        # 三方服务暂时只允许添加一个端口
+        tenant_service_ports = self.get_service_ports(service)
+        logger.debug('======tenant_service_ports======>{0}'.format(type(tenant_service_ports)))
+        if tenant_service_ports and service.service_source == "third_party":
+            return 400, u"三方服务只支持一个域名", None
+
         container_port = int(container_port)
         code, msg = self.check_port(service, container_port)
         if code != 200:
@@ -82,10 +88,6 @@ class AppPortService(object):
                                                                   scope="outer")
             if code != 200:
                 return code, msg, None
-        if is_outer_service:
-            if protocol != "http":
-                if self.is_open_outer_steam_port(tenant.tenant_id, service.service_id, container_port):
-                    return 412, u"非http协议端口只能对外开放一个"
 
         service_port = {"tenant_id": tenant.tenant_id, "service_id": service.service_id,
                         "container_port": container_port, "mapping_port": container_port,
@@ -99,6 +101,30 @@ class AppPortService(object):
                                         {"port": [service_port], "enterprise_id": tenant.enterprise_id})
 
         new_port = port_repo.add_service_port(**service_port)
+        # 三方服务在添加端口是添加一条默认的健康检测数据
+        if service.service_source == "third_party":
+            tenant_service_ports = self.get_service_ports(service)
+            port_list = []
+            for tenant_service_port in tenant_service_ports:
+                port_list.append(tenant_service_port.container_port)
+            if len(port_list) <= 1:
+                probe = probe_repo.get_probe(service.service_id)
+                if not probe:
+                    params = {
+                        "http_header": "",
+                        "initial_delay_second": 2,
+                        "is_used": True,
+                        "mode": "ignore",
+                        "path": "",
+                        "period_second": 3,
+                        "port": int(new_port.container_port),
+                        "scheme": "tcp",
+                        "success_threshold": 1,
+                        "timeout_second": 20
+                    }
+                    code, msg, probe = pros.add_service_probe(tenant, service, params)
+                    if code != 200:
+                        logger.debug('------111----->{0}'.format(msg))
         return 200, "success", new_port
 
     def get_service_ports(self, service):
@@ -210,11 +236,12 @@ class AppPortService(object):
         return 200, u"检测成功"
 
     def manage_port(self, tenant, service, region_name, container_port, action, protocol, port_alias):
+        if port_alias:
+            port_alias = str(port_alias).strip()
         region = region_repo.get_region_by_region_name(region_name)
         code, msg = self.__check_params(action, protocol, port_alias, service.service_id)
         if code != 200:
             return code, msg, None
-        logger.debug('--------actionactionactionaction--------->{0}'.format(action))
         deal_port = port_repo.get_service_port_by_port(tenant.tenant_id, service.service_id, container_port)
         if action == "open_outer":
             code, msg = self.__open_outer(tenant, service, region, deal_port)
@@ -236,9 +263,9 @@ class AppPortService(object):
         return 200, u"操作成功", new_port
 
     def __open_outer(self, tenant, service, region, deal_port):
-        if deal_port.protocol != "http":
-            if self.is_open_outer_steam_port(tenant.tenant_id, service.service_id, deal_port.container_port):
-                return 412, u"非http协议端口只能对外开放一个"
+        # if deal_port.protocol != "http":
+        #     if self.is_open_outer_steam_port(tenant.tenant_id, service.service_id, deal_port.container_port):
+        #         return 412, u"非http协议端口只能对外开放一个"
 
         if deal_port.protocol == "http":
             service_domains = domain_repo.get_service_domain_by_container_port(service.service_id,
@@ -337,9 +364,6 @@ class AppPortService(object):
         return 200, "success"
 
     def __only_open_outer(self, tenant, service, region, deal_port):
-        if deal_port.protocol != "http":
-            if self.is_open_outer_steam_port(tenant.tenant_id, service.service_id, deal_port.container_port):
-                return 412, u"非http协议端口只能对外开放一个"
         deal_port.is_outer_service = True
         if service.create_status == "complete":
             body = region_api.manage_outer_port(service.service_region, tenant.tenant_name,
@@ -351,21 +375,21 @@ class AppPortService(object):
 
             deal_port.lb_mapping_port = lb_mapping_port
         deal_port.save()
-        if deal_port.protocol == "http":
-            service_domains = domain_repo.get_service_domain_by_container_port(service.service_id, deal_port.container_port)
-            # 改变httpdomain表中端口状态
-            if service_domains:
-                for service_domain in service_domains:
-                    service_domain.is_outer_service = True
-                    service_domain.save()
-        else:
-            service_tcp_domains = tcp_domain.get_service_tcp_domains_by_service_id_and_port(service.service_id,
-                                                                                        deal_port.container_port)
-            if service_tcp_domains:
-                for service_tcp_domain in service_tcp_domains:
-                    # 改变tcpdomain表中状态
-                    service_tcp_domain.is_outer_service = True
-                    service_tcp_domain.save()
+
+        service_domains = domain_repo.get_service_domain_by_container_port(service.service_id, deal_port.container_port)
+        # 改变httpdomain表中端口状态
+        if service_domains:
+            for service_domain in service_domains:
+                service_domain.is_outer_service = True
+                service_domain.save()
+
+        service_tcp_domains = tcp_domain.get_service_tcp_domains_by_service_id_and_port(service.service_id,
+                                                                                    deal_port.container_port)
+        if service_tcp_domains:
+            for service_tcp_domain in service_tcp_domains:
+                # 改变tcpdomain表中状态
+                service_tcp_domain.is_outer_service = True
+                service_tcp_domain.save()
 
         return 200, "success"
 
@@ -440,8 +464,6 @@ class AppPortService(object):
         if protocol != "http":
             if deal_port.is_outer_service:
                 return 400, u"请关闭外部访问"
-            if self.is_open_outer_steam_port(tenant.tenant_id, service.service_id, deal_port.container_port):
-                return 412, u"非http协议端口只能对外开放一个"
 
         if service.create_status == "complete":
             body = {"container_port": deal_port.container_port, "is_inner_service": deal_port.is_inner_service,

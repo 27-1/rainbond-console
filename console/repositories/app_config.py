@@ -4,7 +4,7 @@
 """
 import datetime
 from www.models import ServiceDomain, ServiceDomainCertificate, TenantServiceAuth, ServiceAttachInfo, \
-    ServicePaymentNotify, ServiceTcpDomain
+    ServicePaymentNotify, ServiceTcpDomain, GatewayCustomConfiguration
 from www.models import ServiceExtendMethod
 from www.models import TenantServiceEnv
 from www.models import TenantServiceEnvVar, TenantServicesPort, ImageServiceRelation, TenantServiceVolume, \
@@ -286,12 +286,19 @@ class ServiceDomainRepository(object):
         except ServiceDomain.DoesNotExist:
             return None
 
-    def get_domain_by_name_and_port_and_protocol(self, service_id, container_port, domain_name, protocol):
-        try:
-            return ServiceDomain.objects.get(service_id=service_id,
-                                             container_port=container_port, domain_name=domain_name, protocol=protocol)
-        except ServiceDomain.DoesNotExist:
-            return None
+    def get_domain_by_name_and_port_and_protocol(self, service_id, container_port, domain_name, protocol, domain_path=None):
+        if domain_path:
+            try:
+                return ServiceDomain.objects.get(service_id=service_id,
+                                                 container_port=container_port, domain_name=domain_name, protocol=protocol, domain_path=domain_path)
+            except ServiceDomain.DoesNotExist:
+                return None
+        else:
+            try:
+                return ServiceDomain.objects.get(service_id=service_id,
+                                                 container_port=container_port, domain_name=domain_name, protocol=protocol)
+            except ServiceDomain.DoesNotExist:
+                return None
 
     def delete_service_domain_by_port(self, service_id, container_port):
         ServiceDomain.objects.filter(service_id=service_id, container_port=container_port).delete()
@@ -491,6 +498,14 @@ class TenantServiceEndpoints(object):
         return None
 
 
+class GatewayCustom(object):
+    def get_configuration_by_rule_id(self, rule_id):
+        return GatewayCustomConfiguration.objects.filter(rule_id=rule_id).first()
+
+    def add_configuration(self, **configuration_info):
+        return GatewayCustomConfiguration.objects.create(**configuration_info)
+
+
 tcp_domain = ServiceTcpDomainRepository()
 env_var_repo = TenantServiceEnvVarRepository()
 port_repo = TenantServicePortRepository()
@@ -508,3 +523,4 @@ create_step_repo = ServiceStepRepository()
 service_payment_repo = ServicePaymentRepository()
 # endpoints
 service_endpoints_repo = TenantServiceEndpoints()
+configuration_repo = GatewayCustom()

@@ -496,7 +496,7 @@ class BatchDelete(RegionTenantHeaderView):
             msg_list = []
             for service in services:
                 code, msg, event = app_manage_service.batch_delete(self.user, self.tenant, service, is_force=True)
-                msg_dict = {}
+                msg_dict = dict()
                 msg_dict['status'] = code
                 msg_dict['msg'] = msg
                 msg_dict['service_id'] = service.service_id
@@ -722,15 +722,22 @@ class MarketServiceUpgradeView(AppBaseView):
                             extend_info = json.loads(service_source.extend_info)
                             if extend_info:
                                 for app in apps_list:
-                                    logger.debug('---------====app===============>{0}'.format(app))
-                                    logger.debug('---------=====extend_info==============>{0}'.format(extend_info))
-
-                                    if app["service_share_uuid"] == extend_info["source_service_share_uuid"]:
-                                        new_version = int(app["deploy_version"])
-                                        old_version = int(extend_info["source_deploy_version"])
-                                        if new_version > old_version:
-                                            self.service.is_upgrate = True
-                                            self.service.save()
+                                    logger.debug('---------====app===============>{0}'.format(json.dumps(app)))
+                                    logger.debug('---------=====extend_info==============>{0}'.format(json.dumps(extend_info)))
+                                    if app.has_key("service_share_uuid"):
+                                        if app["service_share_uuid"] == extend_info["source_service_share_uuid"]:
+                                            new_version = int(app["deploy_version"])
+                                            old_version = int(extend_info["source_deploy_version"])
+                                            if new_version > old_version:
+                                                self.service.is_upgrate = True
+                                                self.service.save()
+                                    elif not app.has_key("service_share_uuid") and app.has_key("service_key"):
+                                        if app["service_key"] == extend_info["source_service_share_uuid"]:
+                                            new_version = int(app["deploy_version"])
+                                            old_version = int(extend_info["source_deploy_version"])
+                                            if new_version > old_version:
+                                                self.service.is_upgrate = True
+                                                self.service.save()
                         bean["is_upgrate"] = self.service.is_upgrate
                     except Exception as e:
                         logger.exception(e)
@@ -741,7 +748,7 @@ class MarketServiceUpgradeView(AppBaseView):
                 rain_apps = rainbond_app_repo.get_rainbond_app_by_key(group_obj.group_key)
                 if rain_apps:
                     for r_app in rain_apps:
-                        if r_app.version > group_obj.group_version:
+                        if r_app.version > group_obj.group_version and r_app.version not in upgrate_version_list:
                             upgrate_version_list.append(r_app.version)
                         elif r_app.version == group_obj.group_version and self.service.is_upgrate:
                             upgrate_version_list.append(r_app.version)

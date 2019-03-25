@@ -3,6 +3,7 @@
   Created on 18/1/15.
 """
 import logging
+import json
 
 from django.views.decorators.cache import never_cache
 from rest_framework.response import Response
@@ -18,7 +19,7 @@ from console.services.region_services import region_services
 from console.repositories.app import service_repo
 from console.services.team_services import team_services
 from www.utils.crypt import make_uuid
-from console.repositories.app_config import domain_repo, tcp_domain
+from console.repositories.app_config import domain_repo, tcp_domain, configuration_repo
 from www.apiclient.regionapi import RegionInvokeApi
 from console.repositories.region_repo import region_repo
 from console.repositories.group import group_service_relation_repo
@@ -455,7 +456,7 @@ class HttpStrategyView(RegionTenantHeaderView):
             if certificate_id:
                 protocol = "https"
             # 判断策略是否存在
-            service_domain = domain_repo.get_domain_by_name_and_port_and_protocol(service.service_id, container_port, domain_name, protocol)
+            service_domain = domain_repo.get_domain_by_name_and_port_and_protocol(service.service_id, container_port, domain_name, protocol, domain_path)
             if service_domain:
                 result = general_message(400, "faild", "策略已存在")
                 return Response(result, status=400)
@@ -694,22 +695,44 @@ class DomainQueryView(RegionTenantHeaderView):
             search_conditions = request.GET.get("search_conditions", None)
             tenant = team_services.get_tenant_by_tenant_name(tenantName)
             region = region_repo.get_region_by_region_name(self.response_region)
-            total = domain_repo.get_all_domain_count_by_tenant_and_region_id(tenant.tenant_id, region.region_id)
-
-            start = (page - 1) * page_size
-            remaining_num = total - (page - 1) * page_size
-            end = page_size
-            if remaining_num < page_size:
-                end = remaining_num
             try:
                 # 查询分页排序
                 if search_conditions:
+                    # 获取总数
                     cursor = connection.cursor()
                     cursor.execute(
-                        "select domain_name, type, is_senior, certificate_id, service_alias, protocol, service_name, container_port, http_rule_id, service_id, domain_path, domain_cookie, domain_heander, the_weight, is_outer_service from service_domain where tenant_id='{0}' and region_id='{1}' and domain_name like '%{2}%' or service_alias like '%{3}%' or group_name like '%{4}%' order by type desc LIMIT {5},{6};".format(
-                            tenant.tenant_id, region.region_id, search_conditions, search_conditions, search_conditions, start, end))
+                        "select count(*) from service_domain where tenant_id='{0}' and region_id='{1}' and domain_name like '%{2}%';".format(
+                            tenant.tenant_id, region.region_id, search_conditions))
+                    domain_count = cursor.fetchall()
+
+                    total = domain_count[0][0]
+                    start = (page - 1) * page_size
+                    remaining_num = total - (page - 1) * page_size
+                    end = page_size
+                    if remaining_num < page_size:
+                        end = remaining_num
+
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        "select domain_name, type, is_senior, certificate_id, service_alias, protocol, service_name, container_port, http_rule_id, service_id, domain_path, domain_cookie, domain_heander, the_weight, is_outer_service from service_domain where tenant_id='{0}' and region_id='{1}' and domain_name like '%{2}%' order by type desc LIMIT {3},{4};".format(
+                            tenant.tenant_id, region.region_id, search_conditions, start, end))
                     tenant_tuples = cursor.fetchall()
                 else:
+
+                    # 获取总数
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        "select count(*) from service_domain where tenant_id='{0}' and region_id='{1}';".format(
+                            tenant.tenant_id, region.region_id))
+                    domain_count = cursor.fetchall()
+
+                    total = domain_count[0][0]
+                    start = (page - 1) * page_size
+                    remaining_num = total - (page - 1) * page_size
+                    end = page_size
+                    if remaining_num < page_size:
+                        end = remaining_num
+
                     cursor = connection.cursor()
 
                     cursor.execute(
@@ -775,21 +798,43 @@ class ServiceTcpDomainQueryView(RegionTenantHeaderView):
             search_conditions = request.GET.get("search_conditions", None)
             tenant = team_services.get_tenant_by_tenant_name(tenantName)
             region = region_repo.get_region_by_region_name(self.response_region)
-            total = tcp_domain.get_all_domain_count_by_tenant_and_region(tenant.tenant_id, region.region_id)
-            start = (page - 1) * page_size
-            remaining_num = total - (page - 1) * page_size
-            end = page_size
-            if remaining_num < page_size:
-                end = remaining_num
             try:
                 # 查询分页排序
                 if search_conditions:
+                    # 获取总数
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        "select count(*) from service_tcp_domain where tenant_id='{0}' and region_id='{1}' and domain_name like '%{2}%' or service_alias like '%{3}%';".format(
+                            tenant.tenant_id, region.region_id, search_conditions, search_conditions))
+                    domain_count = cursor.fetchall()
+
+                    total = domain_count[0][0]
+                    start = (page - 1) * page_size
+                    remaining_num = total - (page - 1) * page_size
+                    end = page_size
+                    if remaining_num < page_size:
+                        end = remaining_num
+
                     cursor = connection.cursor()
                     cursor.execute(
                         "select end_point, type, protocol, service_name, service_alias, container_port, tcp_rule_id, service_id, is_outer_service from service_tcp_domain where tenant_id='{0}' and region_id='{1}' and end_point like '%{2}%' or service_alias like '%{3}%' or group_name like '%{4}%' order by type desc LIMIT {5},{6};".format(
                             tenant.tenant_id, region.region_id, search_conditions, search_conditions, search_conditions, start, end))
                     tenant_tuples = cursor.fetchall()
                 else:
+                    # 获取总数
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        "select count(*) from service_tcp_domain where tenant_id='{0}' and region_id='{1}';".format(
+                            tenant.tenant_id, region.region_id))
+                    domain_count = cursor.fetchall()
+
+                    total = domain_count[0][0]
+                    start = (page - 1) * page_size
+                    remaining_num = total - (page - 1) * page_size
+                    end = page_size
+                    if remaining_num < page_size:
+                        end = remaining_num
+
                     cursor = connection.cursor()
                     cursor.execute(
                         "select end_point, type, protocol, service_name, service_alias, container_port, tcp_rule_id, service_id, is_outer_service from service_tcp_domain where tenant_id='{0}' and region_id='{1}' order by type desc LIMIT {2},{3};".format(
@@ -1035,6 +1080,76 @@ class GetSeniorUrlView(RegionTenantHeaderView):
             logger.exception(e)
             result = error_message(e.message)
             return Response(result, status=500)
+
+
+# 网关自定义参数设置
+class GatewayCustomConfigurationView(RegionTenantHeaderView):
+    # 获取策略的网关自定义参数
+    @never_cache
+    @perm_required('access_control')
+    def get(self, request, rule_id, *args, **kwargs):
+        if not rule_id:
+            return Response(general_message(400, "parameters are missing", "参数缺失"), status=400)
+        try:
+            cf = configuration_repo.get_configuration_by_rule_id(rule_id)
+            bean = dict()
+            if cf:
+                bean["rule_id"] = cf.rule_id
+                bean["value"] = json.loads(cf.value)
+            result = general_message(200, "success", "查询成功", bean=bean)
+            return Response(result, status=200)
+
+        except Exception as e:
+            logger.exception(e)
+            result = error_message(e.message)
+            return Response(result, status=500)
+
+    # 修改网关的自定义参数
+    @never_cache
+    @perm_required('control_operation')
+    def put(self, request, rule_id, *args, **kwargs):
+        value = request.data.get("value", None)
+        if not rule_id:
+            return Response(general_message(400, "parameters are missing", "参数缺失"), status=400)
+        service_domain = domain_repo.get_service_domain_by_http_rule_id(rule_id)
+        if not service_domain:
+            return Response(general_message(400, "no domain", "策略不存在"), status=400)
+        service_obj = service_repo.get_service_by_service_id(service_domain.service_id)
+        try:
+            if not value:
+                cf = configuration_repo.get_configuration_by_rule_id(rule_id)
+                if not cf:
+                    return Response(general_message(400, "no_modification", "暂无修改"), status=400)
+                gcc_dict = dict()
+                gcc_dict["body"] = cf
+                gcc_dict["rule_id"] = rule_id
+                res, data = region_api.upgrade_configuration(self.response_region, self.tenant, service_obj.service_alias, gcc_dict)
+                if res.status != 200:
+                    return Response(general_message(500, "upgrade faild", "数据中心修改失败"), status=500)
+                result = general_message(200, "success", "修改成功")
+                return Response(result, status=200)
+            else:
+                cf = configuration_repo.get_configuration_by_rule_id(rule_id)
+                gcc_dict = dict()
+                gcc_dict["body"] = value
+                gcc_dict["rule_id"] = rule_id
+                res, data = region_api.upgrade_configuration(self.response_region, self.tenant, service_obj.service_alias, gcc_dict)
+                if res.status == 200:
+                    if cf:
+                        cf.value = json.dumps(value)
+                        cf.save()
+                    else:
+                        cf_dict = dict()
+                        cf_dict["rule_id"] = rule_id
+                        cf_dict["value"] = json.dumps(value)
+                        configuration_repo.add_configuration(**cf_dict)
+                result = general_message(200, "success", "修改成功")
+                return Response(result, status=200)
+        except Exception as e:
+            logger.exception(e)
+            result = error_message(e.message)
+            return Response(result, status=500)
+
 
 
 

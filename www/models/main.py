@@ -1528,6 +1528,7 @@ class ThirdPartyServiceEndpoints(BaseModel):
     endpoints_info = models.TextField(help_text=u"endpoints信息")
     endpoints_type = models.CharField(max_length=32, help_text=u"类型（static-静态， api， discovery-服务发现）")
 
+
 class ServiceWebhooks(BaseModel):
     """服务的自动部署属性"""
 
@@ -1538,4 +1539,14 @@ class ServiceWebhooks(BaseModel):
     state = models.BooleanField(default=False, help_text=u"状态（开启，关闭）")
     webhooks_type = models.CharField(max_length=128, help_text=u"webhooks类型（image_webhooks, code_webhooks, api_webhooks）")
     deploy_keyword = models.CharField(max_length=128, default='deploy', help_text=u"触发自动部署关键字")
+
+
+class GatewayCustomConfiguration(BaseModel):
+    """网关自定义参数配置"""
+    class Meta:
+        db_table = 'gateway_custom_configuration'
+
+    rule_id = models.CharField(max_length=32, help_text=u"规则id")
+    value = models.TextField(help_text=u"配置value")
+
 

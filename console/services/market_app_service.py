@@ -412,7 +412,7 @@ class MarketAppService(object):
                 code, msg, volume_data = volume_service.add_service_volume(
                     tenant, service, volume["volume_path"],
                     volume["volume_type"], volume["volume_name"],
-                    ["file_content"])
+                    volume["file_content"])
             else:
                 code, msg, volume_data = volume_service.add_service_volume(
                     tenant, service, volume["volume_path"],
@@ -454,8 +454,7 @@ class MarketAppService(object):
         tenant_service = TenantServiceInfo()
         tenant_service.tenant_id = tenant.tenant_id
         tenant_service.service_id = make_uuid()
-        tenant_service.service_cname = app_service.generate_service_cname(
-            tenant, app["service_cname"], region)
+        tenant_service.service_cname = app["service_cname"]
         tenant_service.service_alias = "gr" + tenant_service.service_id[-6:]
         tenant_service.creater = user.pk
         if is_slug:
