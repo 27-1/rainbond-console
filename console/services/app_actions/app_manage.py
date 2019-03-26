@@ -27,6 +27,7 @@ from console.repositories.label_repo import service_label_repo
 from www.utils.crypt import make_uuid
 from console.repositories.event_repo import event_repo
 from console.repositories.app_config import tcp_domain
+from django.db import transaction
 
 
 tenantUsedResource = TenantUsedResource()
@@ -218,6 +219,7 @@ class AppManageService(AppManageBase):
 
         return 200, u"操作成功", event
 
+    @transaction.atomic
     def deploy(self, tenant, service, user, is_upgrade, group_version, committer_name=None):
         code, msg, event = event_service.create_event(tenant, service, user, self.DEPLOY, committer_name)
         if code != 200:
@@ -252,6 +254,7 @@ class AppManageService(AppManageBase):
             body["server_type"] = service.server_type
 
         if service.service_source == "market":
+            sid = None
             try:
                 # 获取组对象
                 group_obj = tenant_service_group_repo.get_group_by_service_group_id(service.tenant_service_group_id)
@@ -264,6 +267,7 @@ class AppManageService(AppManageBase):
                         rain_app = rainbond_app_repo.get_enterpirse_app_by_key_and_version(tenant.enterprise_id, group_obj.group_key,
                                                                                          group_obj.group_version)
                     if rain_app:
+                        sid = transaction.savepoint()
                         # 解析app_template的json数据
                         apps_template = json.loads(rain_app.app_template)
                         apps_list = apps_template.get("apps")
@@ -297,36 +301,16 @@ class AppManageService(AppManageBase):
                                         else app.get("service_key", "")
                                     service_source.extend_info = json.dumps(new_extend_info)
                                     service_source.save()
-
-                                    # 删除服务原有端口，环境变量，pod
-                                    code, msg = self.__delete_envs(tenant, service)
-                                    if code != 200:
-                                        raise Exception(msg)
-                                    code, msg = self.__delete_volume(tenant, service)
-                                    if code != 200:
-                                        raise Exception(msg)
-
-                                    # 先保存env,再保存端口，因为端口需要处理env
-                                    code, msg = self.__save_env(tenant, service, app["service_env_map_list"],
-                                                                app["service_connect_info_map_list"])
-                                    if code != 200:
-                                        raise Exception(msg)
-                                    code, msg = self.__save_volume(tenant, service, app["service_volume_map_list"])
-                                    if code != 200:
-                                        raise Exception(msg)
-                                    logger.debug('-------222---->{0}'.format(app["port_map_list"]))
-
-                                    code, msg = self.__save_port(tenant, service, app["port_map_list"])
-                                    if code != 200:
-                                        raise Exception(msg)
-
-                                    # 保存应用探针信息
-                                    self.__save_extend_info(service, app["extend_method_map"])
+                                    # 云市安装应用，服务级别的属性更新
+                                    self.__market_service_upgrade(tenant, service, app)
 
                         group_obj.group_version = rain_app.version
                         group_obj.save()
+                        transaction.savepoint_commit(sid)
             except Exception as e:
                 logger.exception('===========000============>'.format(e))
+                if sid:
+                    transaction.savepoint_rollback(sid)
                 body["image_url"] = service.image
                 if service_source:
                     extend_info = json.loads(service_source.extend_info)
@@ -367,8 +351,46 @@ class AppManageService(AppManageBase):
 
         return 200, "操作成功", event
 
+    def __market_service_upgrade(self, tenant, service, app):
+        """
+        云市安装应用，服务级别属性更新
+        :param tenant:
+        :param service:
+        :param app:
+        :return:
+        """
+
+        # 删除服务原有端口，环境变量
+        code, msg = self.__delete_envs(tenant, service)
+        if code != 200:
+            raise Exception(msg)
+        code, msg = self.__delete_volume(tenant, service)
+        if code != 200:
+            raise Exception(msg)
+
+        # 先保存env,再保存端口，因为端口需要处理env
+        code, msg = self.__save_env(tenant, service, app["service_env_map_list"],
+                                    app["service_connect_info_map_list"])
+        if code != 200:
+            raise Exception(msg)
+        code, msg = self.__save_volume(tenant, service, app["service_volume_map_list"])
+        if code != 200:
+            raise Exception(msg)
+        logger.debug('-------222---->{0}'.format(app["port_map_list"]))
+
+        code, msg = self.__save_port(tenant, service, app["port_map_list"])
+        if code != 200:
+            raise Exception(msg)
+
+        # 更新实例，内存
+        self.__save_extend_info(service, app["extend_method_map"])
+        # 更新健康检测
+        self.__save_probes_info(tenant, service, app["probes"])
+        # 更新服务依赖关系
+        # self.__save_service_dep_relation(tenant, service, app)
+
     def __delete_envs(self, tenant, service):
-        service_envs = env_var_repo.get_service_env(tenant.tenant_id, service.service_id)
+        service_envs = env_var_repo.get_service_env_exclude_build(tenant.tenant_id, service.service_id)
         if service_envs:
             for env in service_envs:
                 env_var_service.delete_env_by_attr_name(tenant, service, env.attr_name)
@@ -386,18 +408,71 @@ class AppManageService(AppManageBase):
     def __save_extend_info(self, service, extend_info):
         if not extend_info:
             return 200, "success"
-        params = {
-            "service_key": service.service_key,
-            "app_version": service.version,
-            "min_node": extend_info["min_node"],
-            "max_node": extend_info["max_node"],
-            "step_node": extend_info["step_node"],
-            "min_memory": extend_info["min_memory"],
-            "max_memory": extend_info["max_memory"],
-            "step_memory": extend_info["step_memory"],
-            "is_restart": extend_info["is_restart"]
-        }
-        extend_repo.create_extend_method(**params)
+        sem = extend_repo.get_extend_method_by_service(service)
+        if not sem:
+            params = {
+                "service_key": service.service_key,
+                "app_version": service.version,
+                "min_node": extend_info["min_node"],
+                "max_node": extend_info["max_node"],
+                "step_node": extend_info["step_node"],
+                "min_memory": extend_info["min_memory"],
+                "max_memory": extend_info["max_memory"],
+                "step_memory": extend_info["step_memory"],
+                "is_restart": extend_info["is_restart"]
+            }
+            extend_repo.create_extend_method(**params)
+        else:
+            sem.min_node = extend_info["min_node"]
+            sem.max_node = extend_info["max_node"]
+            sem.step_node = extend_info["step_node"]
+            sem.min_memory = extend_info["min_memory"]
+            sem.max_memory = extend_info["max_memory"]
+            sem.step_memory = extend_info["step_memory"]
+            sem.is_restart = extend_info["is_restart"]
+            sem.save()
+        return 200, "success"
+
+    def __save_probes_info(self, tenant, service, probes):
+        if not probes:
+            return 200, "success"
+        probe = probe_repo.get_probe(service.service_id)
+        if not probe:
+            params = {
+                "service_id": service.service_id,
+                "probe_id": probes[0]["probe_id"],
+                "mode": probes[0]["mode"],
+                "scheme": probes[0]["scheme"],
+                "path": probes[0]["path"],
+                "port": probes[0]["port"],
+                "cmd": probes[0]["cmd"],
+                "http_header": probes[0]["http_header"],
+                "initial_delay_second": probes[0]["initial_delay_second"],
+                "period_second": probes[0]["period_second"],
+                "timeout_second": probes[0]["timeout_second"],
+                "failure_threshold": probes[0]["failure_threshold"],
+                "success_threshold": probes[0]["success_threshold"],
+                "is_used": probes[0]["is_used"]
+            }
+            probe_repo.add_service_probe(**params)
+
+        else:
+            probe.probe_id = probes[0]["probe_id"]
+            probe.mode = probes[0]["mode"]
+            probe.scheme = probes[0]["scheme"]
+            probe.path = probes[0]["path"]
+            probe.port = probes[0]["port"]
+            probe.cmd = probes[0]["cmd"]
+            probe.http_header = probes[0]["http_header"]
+            probe.initial_delay_second = probes[0]["initial_delay_second"]
+            probe.period_second = probes[0]["period_second"]
+            probe.timeout_second = probes[0]["timeout_second"]
+            probe.failure_threshold = probes[0]["failure_threshold"]
+            probe.success_threshold = probes[0]["success_threshold"]
+            probe.is_used = probes[0]["is_used"]
+            probe.save()
+
+        return 200, "success"
 
     def __save_volume(self, tenant, service, volumes):
         if not volumes:

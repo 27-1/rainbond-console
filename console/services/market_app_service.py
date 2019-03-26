@@ -9,10 +9,10 @@ import logging
 from django.db.models import Q
 
 from console.constants import AppConstants
-from console.repositories.app import service_source_repo, service_repo
-from console.repositories.app_config import extend_repo
+from console.repositories.app import service_source_repo
+from console.repositories.app_config import extend_repo, env_var_repo, port_repo
 from console.repositories.group import tenant_service_group_repo
-from console.repositories.market_app_repo import rainbond_app_repo, app_export_record_repo
+from console.repositories.market_app_repo import rainbond_app_repo
 from console.repositories.team_repo import team_repo
 from console.repositories.user_repo import user_repo
 from console.services.app import app_service
@@ -23,7 +23,7 @@ from console.services.group_service import group_service
 from console.utils.timeutil import current_time_str
 from www.apiclient.marketclient import MarketOpenAPI
 from www.apiclient.regionapi import RegionInvokeApi
-from www.models import TenantServiceInfo, PluginConfigGroup, PluginConfigItems, ServicePluginConfigVar
+from www.models import TenantServiceInfo, ServicePluginConfigVar
 from www.tenantservice.baseservice import BaseTenantService
 from www.utils.crypt import make_uuid
 from console.models.main import RainbondCenterApp
@@ -765,11 +765,78 @@ class MarketAppService(object):
         # 内存对比
         if service.min_memory != app["extend_method_map"]["min_memory"]:
             pass
-        
 
         # 连接信息对比
+        outer_envs_contrast = []
+        app_outer_envs = app["service_connect_info_map_list"]
+        outer_envs = env_var_repo.get_service_env_by_scope(tenant_id=tenant.tenant_id, service_id=service.service_id, scope="outer")
+        outer_attr_name = []
+        app_outer_attr_name = []
+        if outer_envs:
+            for outer_env in outer_envs:
+                outer_attr_name.append(outer_env.attr_name)
+        if app_outer_envs:
+            for app_outer_env in app_outer_envs:
+                app_outer_attr_name.append(app_outer_env["attr_name"])
+        if outer_attr_name:
+            for attr_name in outer_attr_name:
+                if attr_name not in app_outer_attr_name:
+                    outer_env_dict = dict()
+                    is_true = True
+                    outer_env_dict["attr_name"] = attr_name
+                    outer_envs_contrast.append(outer_env_dict)
+        if app_outer_attr_name:
+            for attr_name in app_outer_attr_name:
+                if attr_name not in outer_attr_name:
+                    outer_env_dict = dict()
+                    is_true = True
+                    outer_env_dict["attr_name"] = attr_name
+                    outer_envs_contrast.append(outer_env_dict)
+
+        contrast_dict["outer_envs"] = outer_envs_contrast
+
         # 环境变量对比
+        inner_envs_contrast = []
+        app_inner_envs = app["service_env_map_list"]
+        inner_envs = env_var_repo.get_service_env_by_scope(tenant_id=tenant.tenant_id, service_id=service.service_id, scope="inner")
+
+        inner_attr_name = []
+        app_inner_attr_name = []
+        if inner_envs:
+            for inner_env in inner_envs:
+                inner_attr_name.append(inner_env.attr_name)
+        if app_inner_envs:
+            for app_inner_env in app_inner_envs:
+                app_inner_attr_name.append(app_inner_env["attr_name"])
+        if inner_attr_name:
+            for attr_name in inner_attr_name:
+                if attr_name not in app_inner_attr_name:
+                    inner_env_dict = dict()
+                    is_true = True
+                    inner_env_dict["attr_name"] = attr_name
+                    inner_envs_contrast.append(inner_env_dict)
+        if app_inner_attr_name:
+            for attr_name in app_inner_attr_name:
+                if attr_name not in inner_attr_name:
+                    inner_env_dict = dict()
+                    is_true = True
+                    inner_env_dict["attr_name"] = attr_name
+                    inner_envs_contrast.append(inner_env_dict)
+
+        contrast_dict["inner_envs"] = inner_envs_contrast
+
         # 端口对比
+        ports_list = []
+        service_ports = port_repo.get_service_ports(tenant.tenant_id, service.service_id)
+        if service_ports:
+            for port in service_ports:
+                ports_list.append(port.container_port)
+        app_ports_list = []
+        for port in app["port_map_list"]:
+            if port["container_port"] not in ports_list:
+                app_ports_list.append(port["container_port"])
+        contrast_dict["app_ports_list"] = app_ports_list
+        
         # 存储对比
         # 插件对比
         # 健康检测对比
