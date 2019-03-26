@@ -22,7 +22,6 @@ from www.apiclient.regionapi import RegionInvokeApi
 from console.services.app_config import volume_service
 from console.repositories.group import tenant_service_group_repo
 from console.repositories.market_app_repo import rainbond_app_repo
-from console.services.market_app_service import market_app_service
 
 
 logger = logging.getLogger("default")
@@ -695,6 +694,21 @@ class MarketServiceUpgradeView(AppBaseView):
         try:
             bean = dict()
             upgrate_version_list = []
+
+            # 判断服务状态，未部署的服务不提供升级数据
+            try:
+                body = region_api.check_service_status(self.service.service_region, self.tenant.tenant_name,
+                                                       self.service.service_alias, self.tenant.enterprise_id)
+
+                bean = body["bean"]
+                status = bean["cur_status"]
+            except Exception as e:
+                logger.exception(e)
+                status = "unKnow"
+            if status == "undeploy":
+                result = general_message(200, "success", "查询成功", bean=bean, list=upgrate_version_list)
+                return Response(result, status=result["code"])
+
             if self.service.service_source != "market":
                 return Response(general_message(400, "non-cloud installed applications require no judgment", "非云市安装的应用无需判断"), status=400)
             # 获取组对象
@@ -711,26 +725,51 @@ class MarketServiceUpgradeView(AppBaseView):
                     apps_list = apps_template.get("apps")
                     for app in apps_list:
                         if app["service_key"] == self.service.service_key:
-                            # 对比可升级的应用有哪些属性变化
-                            contrast_dict = market_app_service.property_contrast(self.service, self.tenant, rain_app, app)
-                            if contrast_dict["is_true"]:
-                                upgrate_version_list.append(contrast_dict)
+                            if app["deploy_version"] > self.service.deploy_version:
+                                self.service.is_upgrate = True
+                                self.service.save()
+                    try:
+                        apps_template = json.loads(rain_app.app_template)
+                        apps_list = apps_template.get("apps")
+                        service_source = service_source_repo.get_service_source(self.service.tenant_id,
+                                                                                self.service.service_id)
+                        if service_source and service_source.extend_info:
+                            extend_info = json.loads(service_source.extend_info)
+                            if extend_info:
+                                for app in apps_list:
+                                    logger.debug('---------====app===============>{0}'.format(json.dumps(app)))
+                                    logger.debug('---------=====extend_info==============>{0}'.format(
+                                        json.dumps(extend_info)))
+                                    if app.has_key("service_share_uuid"):
+                                        if app["service_share_uuid"] == extend_info["source_service_share_uuid"]:
+                                            new_version = int(app["deploy_version"])
+                                            old_version = int(extend_info["source_deploy_version"])
+                                            if new_version > old_version:
+                                                self.service.is_upgrate = True
+                                                self.service.save()
+                                    elif not app.has_key("service_share_uuid") and app.has_key("service_key"):
+                                        if app["service_key"] == extend_info["source_service_share_uuid"]:
+                                            new_version = int(app["deploy_version"])
+                                            old_version = int(extend_info["source_deploy_version"])
+                                            if new_version > old_version:
+                                                self.service.is_upgrate = True
+                                                self.service.save()
+                        bean["is_upgrate"] = self.service.is_upgrate
+                    except Exception as e:
+                        logger.exception(e)
+                        result = error_message(e.message)
+                        return Response(result, status=result["code"])
 
                 # 通过group_key获取不同版本的应用市场对象
                 rain_apps = rainbond_app_repo.get_rainbond_app_by_key(group_obj.group_key)
                 if rain_apps:
                     for r_app in rain_apps:
                         if r_app.version > group_obj.group_version and r_app.version not in upgrate_version_list:
-                            apps_template = json.loads(r_app.app_template)
-                            apps_list = apps_template.get("apps")
-                            for app in apps_list:
-                                if app["service_key"] == self.service.service_key:
-                                    # 对比可升级的应用有哪些属性变化
-                                    contrast_dict = market_app_service.property_contrast(self.service, self.tenant,
-                                                                                         r_app, app)
-                                    if contrast_dict["is_true"]:
-                                        upgrate_version_list.append(contrast_dict)
+                            upgrate_version_list.append(r_app.version)
+                        elif r_app.version == group_obj.group_version and self.service.is_upgrate:
+                            upgrate_version_list.append(r_app.version)
 
+            upgrate_version_list.sort()
             result = general_message(200, "success", "查询成功", bean=bean, list=upgrate_version_list)
 
         except Exception as e:
