@@ -564,3 +564,19 @@ class DeployRelation(BaseModel):
         max_length=32, unique=True, help_text=u"服务id")
     key_type = models.CharField(max_length=10, help_text=u"密钥类型")
     secret_key = models.CharField(max_length=200, help_text=u"密钥")
+
+
+class MarketServiceDataBackup(BaseModel):
+    class Meta:
+        db_table = "market_service_data_backup"
+
+    # 云市服务升级前数据备份表
+    data_backup_id = models.CharField(max_length=32, unique=True, help_text=u"数据备份id")
+    service_id = models.CharField(max_length=32, help_text=u"服务id")
+    tenant_id = models.CharField(max_length=32, help_text=u"团队id")
+    group_version = models.CharField(max_length=32, help_text=u"所属云市应用版本")
+    service_template = models.TextField(help_text=u"服务所有属性信息")
+    create_time = models.DateTimeField(auto_now_add=True, blank=True, help_text=u"数据备份时间")
+
+    def __unicode__(self):
+        return self.to_dict()

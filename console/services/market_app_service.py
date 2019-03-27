@@ -23,7 +23,7 @@ from console.services.group_service import group_service
 from console.utils.timeutil import current_time_str
 from www.apiclient.marketclient import MarketOpenAPI
 from www.apiclient.regionapi import RegionInvokeApi
-from www.models import TenantServiceInfo, ServicePluginConfigVar
+from www.models import TenantServiceInfo, ServicePluginConfigVar, TenantServiceRelation
 from www.tenantservice.baseservice import BaseTenantService
 from www.utils.crypt import make_uuid
 from console.models.main import RainbondCenterApp
@@ -845,6 +845,97 @@ class MarketAppService(object):
 
         contrast_dict["is_true"] = is_true
         return contrast_dict
+
+    def service_backup_data(self, tenant, service, service_data):
+        # 基本信息整合
+        service_data['service_id'] = service.service_id
+        service_data['tenant_id'] = service.tenant_id
+        service_data['service_key'] = service.service_key
+        service_data['service_alias'] = service.service_alias
+        service_data['service_region'] = service.service_region
+        service_data['desc'] = service.desc
+        service_data['category'] = service.category
+        service_data['image'] = service.image
+        service_data['version'] = service.version
+        service_data["cmd"] = service.cmd
+        service_data['extend_method'] = service.extend_method
+        service_data['min_node'] = service.min_node
+        service_data['min_cpu'] = service.min_cpu
+        service_data['min_memory'] = service.min_memory
+        service_data['host_path'] = service.host_path
+        service_data['code_from'] = service.code_from
+        service_data['git_url'] = service.git_url
+        service_data['create_time'] = service.create_time
+        service_data['creater'] = service.creater
+        service_data['service_type'] = service.service_type
+        service_data['total_memory'] = service.total_memory
+        service_data['is_service'] = service.is_service
+        service_data['namespace'] = service.namespace
+        service_data['tenant_service_group_id'] = service.tenant_service_group_id
+        service_data['open_webhooks'] = service.open_webhooks
+        service_data['service_source'] = service.service_source
+        service_data['create_status'] = service.create_status
+        service_data['update_time'] = service.update_time
+        service_data['check_uuid'] = service.check_uuid
+        service_data['check_event_id'] = service.check_event_id
+        service_data['docker_cmd'] = service.docker_cmd
+        service_data['secret'] = service.secret
+        service_data['server_type'] = service.server_type
+        service_data['language'] = service.language
+        service_data['is_upgrate'] = service.is_upgrate
+        service_data['build_upgrade'] = service.build_upgrade
+
+        # 端口信息
+        tenant_service_ports = port_service.get_service_ports(service)
+        port_map_list = []
+        if tenant_service_ports:
+            for tenant_service_port in tenant_service_ports:
+                port_dict = dict()
+                port_dict["port_alias"] = tenant_service_port.port_alias
+                port_dict["protocol"] = tenant_service_port.protocol
+                port_dict["tenant_id"] = tenant_service_port.tenant_id
+                port_dict["container_port"] = tenant_service_port.container_port
+                port_dict["is_outer_service"] = tenant_service_port.is_outer_service
+                port_dict["is_inner_service"] = tenant_service_port.is_inner_service
+                port_map_list.append(port_dict)
+        service_data["port_map_list"] = port_map_list
+
+        # 依赖信息
+        dep_service_list = []
+        relation_list = TenantServiceRelation.objects.filter(service_id=service.service_id).all()
+        if relation_list:
+            for relation in relation_list:
+                dep_service_dict = dict()
+                dep_service_dict["dep_service_id"] = relation.dep_service_id
+                dep_service_dict["dep_service_type"] = relation.dep_service_type
+                dep_service_list.append(dep_service_dict)
+        service_data["dep_service_list"] = dep_service_list
+
+        # 连接信息和环境变量
+        envs_list = []
+        service_envs = env_var_repo.get_service_env(tenant.tenant_id, service.service_id)
+        if service_envs:
+            for service_env in service_envs:
+                service_env_dict = dict()
+                service_env_dict["tenant_id"] = service_env.tenant_id
+                service_env_dict["container_port"] = service_env.container_port
+                service_env_dict["name"] = service_env.name
+                service_env_dict["attr_name"] = service_env.attr_name
+                service_env_dict["attr_value"] = service_env.attr_value
+                service_env_dict["is_change"] = service_env.is_change
+                service_env_dict["scope"] = service_env.scope
+                service_env_dict["create_time"] = service_env.create_time
+                envs_list.append(service_env_dict)
+        service_data["envs_list"] = envs_list
+
+        #
+
+
+
+
+
+
+
 
 
 class MarketTemplateTranslateService(object):

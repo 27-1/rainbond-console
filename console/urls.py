@@ -39,7 +39,7 @@ from console.views.center_pool.app_import import CenterAppUploadView, CenterAppI
     CenterAppImportingAppsView, ImportingRecordView
 from console.views.center_pool.apps import CenterAppListView, \
     DownloadMarketAppGroupTemplageDetailView, CenterAllMarketAppView, CenterAppManageView, CenterVersionlMarversionketAppView
-from console.views.center_pool.apps import CenterAppView
+from console.views.center_pool.apps import CenterAppView, AppsDataBackupView
 from console.views.center_pool.groupapp_backup import GroupAppsBackupView, TeamGroupAppsBackupView, \
     GroupAppsBackupStatusView, GroupAppsBackupExportView, GroupAppsBackupImportView, AllTeamGroupAppsBackupView
 from console.views.center_pool.groupapp_migration import GroupAppsMigrateView, GroupAppsView, MigrateRecordView
@@ -498,6 +498,8 @@ urlpatterns = patterns(
     # 获取可安装应用
     url(r'^apps$', CenterAppListView.as_view()),
     url(r'^teams/(?P<tenantName>[\w\-]+)/apps/market_create$', CenterAppView.as_view()),
+    # 云市应用升级前服务数据备份(可多个服务一起备份)
+    url(r'^teams/(?P<tenantName>[\w\-]+)/apps/data_backup$', AppsDataBackupView.as_view()),
 
     # 好雨云市应用同步
     # 同步应用

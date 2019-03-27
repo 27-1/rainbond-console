@@ -254,7 +254,7 @@ class AppManageService(AppManageBase):
             body["server_type"] = service.server_type
 
         if service.service_source == "market":
-            sid = None
+            sid = transaction.savepoint()
             try:
                 # 获取组对象
                 group_obj = tenant_service_group_repo.get_group_by_service_group_id(service.tenant_service_group_id)
@@ -267,10 +267,10 @@ class AppManageService(AppManageBase):
                         rain_app = rainbond_app_repo.get_enterpirse_app_by_key_and_version(tenant.enterprise_id, group_obj.group_key,
                                                                                          group_obj.group_version)
                     if rain_app:
-                        sid = transaction.savepoint()
                         # 解析app_template的json数据
                         apps_template = json.loads(rain_app.app_template)
                         apps_list = apps_template.get("apps")
+                        plugins = apps_template.get("plugins")
                         if service_source and service_source.extend_info:
                             extend_info = json.loads(service_source.extend_info)
                             for app in apps_list:
@@ -301,16 +301,17 @@ class AppManageService(AppManageBase):
                                         else app.get("service_key", "")
                                     service_source.extend_info = json.dumps(new_extend_info)
                                     service_source.save()
-                                    # 云市安装应用，服务级别的属性更新
-                                    self.__market_service_upgrade(tenant, service, app)
+
+                                    if service.build_upgrade:
+                                        # 云市安装应用，服务级别的属性更新
+                                        self.__market_service_upgrade(tenant, service, app, plugins)
 
                         group_obj.group_version = rain_app.version
                         group_obj.save()
                         transaction.savepoint_commit(sid)
             except Exception as e:
                 logger.exception('===========000============>'.format(e))
-                if sid:
-                    transaction.savepoint_rollback(sid)
+                transaction.savepoint_rollback(sid)
                 body["image_url"] = service.image
                 if service_source:
                     extend_info = json.loads(service_source.extend_info)
@@ -351,7 +352,7 @@ class AppManageService(AppManageBase):
 
         return 200, "操作成功", event
 
-    def __market_service_upgrade(self, tenant, service, app):
+    def __market_service_upgrade(self, tenant, service, app, plugins):
         """
         云市安装应用，服务级别属性更新
         :param tenant:
@@ -360,10 +361,7 @@ class AppManageService(AppManageBase):
         :return:
         """
 
-        # 删除服务原有端口，环境变量
-        code, msg = self.__delete_envs(tenant, service)
-        if code != 200:
-            raise Exception(msg)
+        # 删除服务原有存储
         code, msg = self.__delete_volume(tenant, service)
         if code != 200:
             raise Exception(msg)
@@ -386,8 +384,19 @@ class AppManageService(AppManageBase):
         self.__save_extend_info(service, app["extend_method_map"])
         # 更新健康检测
         self.__save_probes_info(tenant, service, app["probes"])
+        # 更新（加法）插件
+        self.__upgrade_service_plugins(tenant, service, app["service_related_plugin_config"], plugins)
         # 更新服务依赖关系
         # self.__save_service_dep_relation(tenant, service, app)
+
+    def __upgrade_service_plugins(self, tenant, service, plugin_config_list, plugins):
+        if not plugin_config_list:
+            return 200, "success"
+        plugin_id_list = []
+        for plugin_config in plugin_config_list:
+            if plugin_config["plugin_id"] not in plugin_id_list:
+                plugin_id_list.append(plugin_config["plugin_id"])
+        # TODO
 
     def __delete_envs(self, tenant, service):
         service_envs = env_var_repo.get_service_env_exclude_build(tenant.tenant_id, service.service_id)
@@ -497,6 +506,14 @@ class AppManageService(AppManageBase):
         if not inner_envs and not outer_envs:
             return 200, "success"
         for env in inner_envs:
+            inner_attr_name = []
+            inner_envs = env_var_repo.get_service_env_by_scope(tenant_id=tenant.tenant_id,
+                                                               service_id=service.service_id, scope="inner")
+            if inner_envs:
+                for inner_env in inner_envs:
+                    inner_attr_name.append(inner_env.attr_name)
+            if env["attr_name"] in inner_attr_name:
+                continue
             code, msg, env_data = env_var_service.add_service_env_var(tenant, service, 0, env["name"], env["attr_name"],
                                                                       env["attr_value"], env["is_change"],
                                                                       "inner")
@@ -504,6 +521,14 @@ class AppManageService(AppManageBase):
                 logger.error("save market app env error {0}".format(msg))
                 return code, msg
         for env in outer_envs:
+            outer_attr_name = []
+            outer_envs = env_var_repo.get_service_env_by_scope(tenant_id=tenant.tenant_id,
+                                                               service_id=service.service_id, scope="outer")
+            if outer_envs:
+                for outer_env in outer_envs:
+                    outer_attr_name.append(outer_env.attr_name)
+            if env["attr_name"] in outer_attr_name:
+                continue
             container_port = env.get("container_port", 0)
             if container_port == 0:
                 if env["attr_value"] == "**None**":
@@ -1416,3 +1441,8 @@ class AppManageService(AppManageBase):
         self.__create_service_delete_event(tenant, service, user)
         service.delete()
         return 200, "success"
+
+    # 备份应用市场应用升级源数据
+    def __market_service_data_backup(self, tenant, service):
+        pass
+

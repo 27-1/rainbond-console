@@ -22,6 +22,7 @@ from console.services.enterprise_services import enterprise_services
 from console.services.user_services import user_services
 from console.models.main import RainbondCenterApp
 from django.db.models import F
+from console.repositories.app import service_repo
 
 logger = logging.getLogger('default')
 
@@ -405,4 +406,44 @@ class CenterVersionlMarversionketAppView(RegionTenantHeaderView):
             logger.exception(e)
             result = error_message(e.message)
         return Response(result, status=result["code"])
+
+
+class AppsDataBackupView(RegionTenantHeaderView):
+    @never_cache
+    @perm_required("import_and_export_service")
+    def post(self, request, *args, **kwargs):
+        """
+        数据库备份数据，为回滚做准备
+        :param request:
+        :param args:
+        :param kwargs:
+        :return:
+        """
+        service_id_list = request.data.get("service_ids", None)
+        if not service_id_list:
+            return Response(general_message(400, "service_ids is null", "请指明需要备份数据的服务"), status=400)
+        try:
+            data_backup_list = []
+            for service_id in service_id_list:
+                service_data = dict()
+                service_obj = service_repo.get_service_by_service_id(service_id)
+                if not service_obj:
+                    continue
+                # 备份数据
+                code, back_up_obj = market_app_service.service_backup_data(self.tenant, service_obj, service_data)
+                if code != 200:
+                    service_data["is_backup"] = False
+                    service_data["service_cname"] = service_obj.service_cname
+                    data_backup_list.append(service_data)
+                    continue
+                service_data["is_backup"] = True
+                data_backup_list.append(service_data)
+
+            result = general_message(200, "success", "数据备份成功", list=data_backup_list)
+        except Exception as e:
+            logger.exception(e)
+            result = error_message(e.message)
+        return Response(result, status=result["code"])
+
+
 
